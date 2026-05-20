@@ -1,101 +1,85 @@
 // ============================================================
 // lib/services/history_service.dart
-// Auto-saves daily attendance to history when a new day starts.
-// History is keyed by date string. Admin can view all past records.
+// UPDATED: Now uses SQLite (LocalDatabase) instead of
+//          SharedPreferences JSON blobs.
+//
+// Public API is identical to the original.
 // ============================================================
 
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 import '../models/schedule.dart';
+import 'local_database.dart';
 
 class HistoryService {
-  static const _prefix        = 'history_';
-  static const _lastSavedKey  = 'history_last_saved_date';
+  static const _lastSavedKey = 'history_last_saved_date';
 
-  // ── Today's date string ──────────────────────────────────
   static String get _todayStr {
     final n = DateTime.now();
     return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
-  // ── Should we auto-save? True if last save was not today ─
+  // ── Should we auto-save today? ────────────────────────────
   static Future<bool> shouldAutoSave() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_lastSavedKey) != _todayStr;
+    final db   = await LocalDatabase.database;
+    // Use a tiny meta table stored in the same DB
+    final rows = await db.rawQuery(
+      "SELECT value FROM sqlite_meta WHERE key = ?",
+      [_lastSavedKey],
+    ).catchError((_) async {
+      // Table may not exist on first run — create it
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS sqlite_meta (
+          key   TEXT PRIMARY KEY,
+          value TEXT
+        )
+      ''');
+      return <Map<String, dynamic>>[];
+    });
+
+    if (rows.isEmpty) return true;
+    return (rows.first['value'] as String?) != _todayStr;
   }
 
-  // ── Save today's checked records to history ───────────────
-  // Call this before resetting attendance at start of new day.
+  // ── Save today's checked records ──────────────────────────
   static Future<void> saveToday(List<ClassSchedule> schedules) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Only save entries that have been checked (have a status)
     final checked = schedules
         .where((s) => s.status != null && !s.isArchived)
         .toList();
 
-    if (checked.isEmpty) {
-      // Nothing to save — still mark today so we don't re-trigger
-      await prefs.setString(_lastSavedKey, _todayStr);
-      return;
+    if (checked.isNotEmpty) {
+      await LocalDatabase.saveHistory(_todayStr, checked);
     }
 
-    final records = checked.map((s) => {
-      'instructor'    : s.instructor,
-      'courseCode'    : s.courseCode,
-      'subjectTitle'  : s.subjectTitle,
-      'room'          : s.room,
-      'timeRange'     : s.timeRange,
-      'days'          : s.days,
-      'status'        : s.status,
-      'attendanceTime': s.attendanceTime ?? '',
-      'remarks'       : s.remarks ?? '',
-      'setNumber'     : s.setNumber,
-    }).toList();
-
-    await prefs.setString('$_prefix$_todayStr', jsonEncode(records));
-    await prefs.setString(_lastSavedKey, _todayStr);
+    // Mark today as saved
+    final db = await LocalDatabase.database;
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sqlite_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      )
+    ''');
+    await db.insert(
+      'sqlite_meta',
+      {'key': _lastSavedKey, 'value': _todayStr},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
-  // ── Load all history entries — newest first ───────────────
+  // ── Load all history (newest first) ──────────────────────
   static Future<List<Map<String, dynamic>>> loadAllHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys  = prefs
-        .getKeys()
-        .where((k) => k.startsWith(_prefix))
-        .toList()
-      ..sort((a, b) => b.compareTo(a)); // newest first
-
-    final result = <Map<String, dynamic>>[];
-    for (final key in keys) {
-      final dateStr = key.replaceFirst(_prefix, '');
-      final raw     = prefs.getString(key);
-      if (raw == null) continue;
-      try {
-        final list = (jsonDecode(raw) as List)
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-        result.add({'date': dateStr, 'records': list});
-      } catch (_) {
-        // Skip malformed entries
-      }
-    }
-    return result;
+    return LocalDatabase.loadAllHistory();
   }
 
-  // ── Delete a single day's history (optional, for cleanup) ─
+  // ── Delete a single day ───────────────────────────────────
   static Future<void> deleteDay(String dateStr) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('$_prefix$dateStr');
+    await LocalDatabase.deleteHistory(dateStr);
   }
 
   // ── Clear all history ─────────────────────────────────────
   static Future<void> clearAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys  = prefs.getKeys().where((k) => k.startsWith(_prefix)).toList();
-    for (final k in keys) {
-      await prefs.remove(k);
-    }
-    await prefs.remove(_lastSavedKey);
+    final db = await LocalDatabase.database;
+    await db.delete('history');
+    await db.delete('sqlite_meta',
+        where: 'key = ?', whereArgs: [_lastSavedKey]);
   }
 }

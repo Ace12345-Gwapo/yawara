@@ -1,30 +1,26 @@
 // ============================================================
 // lib/services/reset_utility.dart
-// I-reset ang tanan nga attendance — SA accounts dili mawala
+// UPDATED: Uses SQLite instead of SharedPreferences.
+//          SA accounts and profiles are preserved automatically
+//          because they live in a separate `users` table.
 // ============================================================
 
-import 'package:shared_preferences/shared_preferences.dart';
 import '../models/schedule.dart';
+import 'local_database.dart';
 
 class ResetUtility {
-  /// I-clear ang attendance data pero i-preserve ang SA accounts ug profiles
+  /// Clear attendance statuses for all schedules.
+  /// Schedule records, SA accounts, and history are NOT deleted.
   static Future<void> resetAll(List<ClassSchedule> schedules) async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys().toList();
+    // Reset in SQLite
+    await LocalDatabase.resetAttendanceStatuses();
 
-    for (final key in keys) {
-      // Dili tangtangon ang SA accounts ug profile data
-      if (!key.startsWith('sa_') &&
-          !key.startsWith('profile_')) {
-        await prefs.remove(key);
-      }
-    }
-
-    // I-clear ang attendance status sa memory
-    for (var item in schedules) {
-      item.status = null;
-      item.attendanceTime = null;
-      item.remarks = null;
+    // Mirror reset in the in-memory list
+    for (final s in schedules) {
+      s.status          = null;
+      s.attendanceTime  = null;
+      s.remarks         = null;
+      s.syncStatus      = SyncStatus.pending;
     }
   }
 }

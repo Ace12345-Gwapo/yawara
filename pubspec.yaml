@@ -9,9 +9,15 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.2
+  # ── Existing ─────────────────────────────────────────────
   shared_preferences: ^2.2.2
   image_picker: ^1.0.4
   image_picker_for_web: ^3.0.1
+  # ── NEW: Hybrid Database ──────────────────────────────────
+  sqflite: ^2.3.3+1          # Local SQLite (offline)
+  path: ^1.9.0               # Required by sqflite
+  supabase_flutter: ^2.5.6   # Supabase cloud sync
+  connectivity_plus: ^6.0.3  # Detect online/offline state
 
 dev_dependencies:
   flutter_test:
@@ -38,14 +44,11 @@ flutter:
         - asset: assets/fonts/Poppins-Black.ttf
           weight: 900
 
-# Configuration for a perfect circular icon with fully visible design
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/images/tcgc.png"
   min_sdk_android: 21
-  
-  # This shapes and shrinks the icon to match the Clock app look
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/images/tcgc.png"
   adaptive_icon_foreground_inset: 35

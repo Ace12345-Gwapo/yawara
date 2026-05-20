@@ -1,104 +1,118 @@
 // ============================================================
 // lib/services/auth_service.dart
-// Nagdumala sa login, register, ug delete sa accounts
+// UPDATED: SA accounts now stored in SQLite (users table)
+//          instead of SharedPreferences.
+//
+// Public API is identical to the original — no screen changes needed.
 // ============================================================
 
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../models/schedule.dart';
+import 'local_database.dart';
 import 'persistence_service.dart';
 
 class AuthService {
-  // Hard-coded admin credentials
+  // Hard-coded admin credentials (unchanged)
   static const String _adminUser = 'admin';
   static const String _adminPass = '123';
 
-  /// I-hash ang password para dili makita sa plain text
+  /// Hash password — same algorithm as original
   static String _hashPassword(String password) {
     return base64.encode(utf8.encode('tcgc_salt_$password'));
   }
 
-  /// I-register ang bag-ong Student Assistant account
+  /// Register a new Student Assistant account
   static Future<bool> registerSA(String username, String password) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Dili pwede mag-register isip admin
     if (username.toLowerCase() == _adminUser) return false;
 
-    // Tan-awa kung naay existing na account
-    if (prefs.containsKey('sa_$username')) return false;
+    // Check for existing account
+    final existing = await LocalDatabase.getUser(username);
+    if (existing != null) return false;
 
-    await prefs.setString('sa_$username', _hashPassword(password));
+    await LocalDatabase.upsertUser({
+      'username':      username,
+      'password_hash': _hashPassword(password),
+      'sync_status':   SyncStatus.pending.name,
+    });
     return true;
   }
 
-  /// I-login ang user — ibalik ang role o null kung sayop
+  /// Login — returns role string or null if invalid
   static Future<String?> login(String username, String password) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Admin login check
+    // Admin check (still hard-coded)
     if (username == _adminUser && password == _adminPass) return 'Admin';
 
-    // SA login check
-    final savedHash = prefs.getString('sa_$username');
+    final user = await LocalDatabase.getUser(username);
+    if (user == null) return null;
 
-    // Tan-awa kung deleted na ang account — dili sila makalog-in
-    if (savedHash == null) return null;
-
-    if (savedHash == _hashPassword(password)) return 'Student Assistant';
+    if (user['password_hash'] == _hashPassword(password)) {
+      return 'Student Assistant';
+    }
     return null;
   }
 
-  /// Kuhaa ang lista sa tanan nga registered SA
+  /// Get list of all registered SA usernames
   static Future<List<String>> getSAList() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saList = prefs
-        .getKeys()
-        .where((k) => k.startsWith('sa_') && !k.startsWith('sa_assign_'))
-        .map((k) => k.substring(3))
-        .toList()
-      ..sort();
-    return saList;
+    final usernames = await LocalDatabase.getAllSAUsernames();
+    usernames.sort();
+    return usernames;
   }
 
-  /// I-delete ang SA account — permanente, dili na sila makalog-in
-  /// I-clear usab ang tanan nga entries nga gi-assign kanila
+  /// Delete an SA account and unassign their schedules
   static Future<bool> deleteSA(String username) async {
-    final prefs = await SharedPreferences.getInstance();
+    final existing = await LocalDatabase.getUser(username);
+    if (existing == null) return false;
 
-    // Tan-awa kung naay account
-    if (!prefs.containsKey('sa_$username')) return false;
+    await LocalDatabase.deleteUser(username);
 
-    // Tangtanga ang account — dili na sila makalog-in
-    await prefs.remove('sa_$username');
-
-    // I-clear ang tanan nga profile data sa deleted SA
-    await prefs.remove('profile_img_$username');
-    await prefs.remove('profile_gmail_$username');
-    await prefs.remove('profile_phone_$username');
-    await prefs.remove('profile_address_$username');
-    await prefs.remove('profile_bio_$username');
-
-    // I-unassign ang tanan nga entries nga gi-assign sa deleted SA
-    for (int i = 0; i < allInstructors.length; i++) {
-      if (allInstructors[i].assignedSA == username) {
-        allInstructors[i].assignedSA = null;
+    // Unassign from in-memory schedules and persist
+    bool changed = false;
+    for (final s in allInstructors) {
+      if (s.assignedSA == username) {
+        s.assignedSA = null;
+        changed = true;
       }
     }
-    // I-save ang updated entries
-    await PersistenceService.saveAttendance(allInstructors);
-
+    if (changed) {
+      await PersistenceService.saveAttendance(allInstructors);
+    }
     return true;
   }
 
-  /// I-change ang password sa SA
+  /// Change SA password
   static Future<bool> changePassword(
       String username, String oldPassword, String newPassword) async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedHash = prefs.getString('sa_$username');
-    if (savedHash == null) return false;
-    if (savedHash != _hashPassword(oldPassword)) return false;
-    await prefs.setString('sa_$username', _hashPassword(newPassword));
+    final user = await LocalDatabase.getUser(username);
+    if (user == null) return false;
+    if (user['password_hash'] != _hashPassword(oldPassword)) return false;
+
+    await LocalDatabase.updateUserField(
+        username, 'password_hash', _hashPassword(newPassword));
     return true;
+  }
+
+  // ── Profile helpers (replaces SharedPreferences profile_ keys) ──
+
+  static Future<void> saveProfileField(
+      String username, String field, String value) async {
+    await LocalDatabase.updateUserField(username, field, value);
+  }
+
+  static Future<String?> loadProfileField(
+      String username, String field) async {
+    final user = await LocalDatabase.getUser(username);
+    if (user == null) return null;
+    return user[field] as String?;
+  }
+
+  /// Save profile image as base64 string
+  static Future<void> saveProfileImage(
+      String username, String base64Image) async {
+    await LocalDatabase.updateUserField(
+        username, 'profile_img', base64Image);
+  }
+
+  static Future<String?> loadProfileImage(String username) async {
+    return loadProfileField(username, 'profile_img');
   }
 }
