@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import '../models/schedule.dart';
 import 'local_database.dart';
 import 'persistence_service.dart';
@@ -36,7 +37,7 @@ class AuthService {
 
   static Future<String?> login(String username, String password) async {
     try {
-      if (username == _adminUser && password == _adminPass) {
+      if (username.toLowerCase() == _adminUser && password == _adminPass) {
         await LocalDatabase.ensureAdminRow();
         return 'Admin';
       }

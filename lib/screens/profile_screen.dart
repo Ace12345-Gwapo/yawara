@@ -92,6 +92,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _saveProfile() async {
     FocusScope.of(context).unfocus();
+    final messenger = ScaffoldMessenger.of(context);
 
     await AuthService.saveProfileField(
         widget.username, 'gmail', _gmailCtrl.text.trim());
@@ -106,7 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!mounted) return;
     setState(() => _isSaved = true);
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       const SnackBar(
         content: Text('Profile updated successfully.'),
         backgroundColor: Color(0xFF16A34A),
@@ -119,6 +120,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _pickImage() async {
     if (_isPickingImage) return;
     setState(() => _isPickingImage = true);
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final XFile? picked =
           await _picker.pickImage(source: ImageSource.gallery);
@@ -128,8 +130,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       final bytes  = await picked.readAsBytes();
       if (bytes.isEmpty) {
+        if (!mounted) return;
         setState(() => _isPickingImage = false);
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
               content: Text('Image is empty. Try another.'),
               backgroundColor: Colors.orange),
@@ -142,7 +145,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _imageBytes     = bytes;
         _isPickingImage = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
             content: Text('Photo updated!'),
             backgroundColor: _green),
@@ -150,7 +153,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isPickingImage = false);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
     }

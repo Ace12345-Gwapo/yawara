@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/schedule.dart';
@@ -10,8 +11,14 @@ class SyncService {
 
   static Future<bool> isOnline() async {
     try {
-      final result = await Connectivity().checkConnectivity();
-      return result != ConnectivityResult.none;
+      final dynamic result = await Connectivity().checkConnectivity();
+      if (result is ConnectivityResult) {
+        return result != ConnectivityResult.none;
+      }
+      if (result is List<ConnectivityResult>) {
+        return result.isNotEmpty && result.first != ConnectivityResult.none;
+      }
+      return false;
     } catch (_) {
       return false;
     }

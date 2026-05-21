@@ -34,7 +34,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   static const _green = Color(0xFF1B5E20);
 
   bool _isValidUsername(String u) =>
-      RegExp(r'^[a-zA-Z][a-zA-Z0-9 .]*$').hasMatch(u);
+      RegExp(r"^[a-zA-Z][a-zA-Z0-9 .\-']*$").hasMatch(u);
 
   bool _isValidEmail(String e) =>
       RegExp(r'^[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}$').hasMatch(e);
@@ -109,13 +109,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  Widget _label(String text) => Padding(
+  Widget _label(String text, Color color) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Text(text,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF374151))),
+                color: color)),
       );
 
   Widget _hint(String text) => Padding(
@@ -126,8 +126,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark =
-        ThemeService.themeMode.value == ThemeMode.dark;
+    final isDark = ThemeService.themeMode.value == ThemeMode.dark;
     final labelColor =
         isDark ? const Color(0xFF9CA3AF) : const Color(0xFF374151);
 
@@ -143,7 +142,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Full Name ──────────────────────────────
-            _label('Full Name'),
+            _label('Full Name', labelColor),
             TextField(
               controller: _userCtrl,
               textInputAction: TextInputAction.next,
@@ -162,7 +161,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 18),
 
             // ── Email (NEW) ────────────────────────────
-            _label('Email Address'),
+            _label('Email Address', labelColor),
             TextField(
               controller: _emailCtrl,
               focusNode: _emailFocus,
@@ -182,7 +181,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 18),
 
             // ── Password (renamed from "New Password") ─
-            _label('Password'),
+            _label('Password', labelColor),
             TextField(
               controller: _passCtrl,
               focusNode: _passFocus,
@@ -209,7 +208,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 18),
 
             // ── Confirm Password ───────────────────────
-            _label('Confirm Password'),
+            _label('Confirm Password', labelColor),
             TextField(
               controller: _confirmCtrl,
               focusNode: _confirmFocus,
@@ -249,6 +248,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       )
                     : const Text('Register Account',
                         style: TextStyle(color: Colors.white)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Center(
+              child: Text(
+                'Use a full name, valid email, and 6+ character password.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
             const SizedBox(height: 16),

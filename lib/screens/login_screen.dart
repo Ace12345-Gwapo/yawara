@@ -20,7 +20,7 @@ class _LoginScreenState extends State<LoginScreen> {
   static const _green = Color(0xFF1B5E20);
 
   bool _isValidUsername(String u) =>
-      RegExp(r'^[a-zA-Z][a-zA-Z0-9 .]*$').hasMatch(u);
+      RegExp(r"^[a-zA-Z][a-zA-Z0-9 .\-']*$").hasMatch(u);
 
   void _showSnackBar(String msg, Color color) {
     if (!mounted) return;
@@ -40,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (username.toLowerCase() != 'admin') {
       if (!_isValidUsername(username)) {
-        _showSnackBar('Invalid name. Must start with a letter.', Colors.red);
+        _showSnackBar('Invalid name. Use letters, numbers, spaces, or . -', Colors.red);
         return;
       }
       if (username.length < 6) {
@@ -223,6 +223,17 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
 
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Text(
+                          'Admin login: username "admin" and password "123456"',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       Center(
                         child: Row(

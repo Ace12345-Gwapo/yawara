@@ -245,7 +245,7 @@ class LocalDatabase {
   static Future<Map<String, dynamic>?> getUser(String username) async {
     final db   = await database;
     final rows = await db.query('users',
-        where: 'username = ?', whereArgs: [username], limit: 1);
+        where: 'LOWER(username) = LOWER(?)', whereArgs: [username], limit: 1);
     return rows.isNotEmpty ? rows.first : null;
   }
 
@@ -261,7 +261,7 @@ class LocalDatabase {
 
   static Future<void> deleteUser(String username) async {
     final db = await database;
-    await db.delete('users', where: 'username = ?', whereArgs: [username]);
+    await db.delete('users', where: 'LOWER(username) = LOWER(?)', whereArgs: [username]);
   }
 
   static Future<void> updateUserField(
@@ -270,7 +270,7 @@ class LocalDatabase {
     await db.update(
       'users',
       {field: value, 'sync_status': SyncStatus.pending.name},
-      where: 'username = ?',
+      where: 'LOWER(username) = LOWER(?)',
       whereArgs: [username],
     );
   }
@@ -285,7 +285,7 @@ class LocalDatabase {
   static Future<void> markUserSynced(String username) async {
     final db = await database;
     await db.update('users', {'sync_status': SyncStatus.synced.name},
-        where: 'username = ?', whereArgs: [username]);
+        where: 'LOWER(username) = LOWER(?)', whereArgs: [username]);
   }
 
   // ── Admin profile helpers ─────────────────────────────────

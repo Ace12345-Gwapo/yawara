@@ -81,9 +81,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     int present = 0, late = 0, absent = 0;
     for (final r in records) {
       final s = r['status'] as String? ?? '';
-      if (s == 'Present') present++;
-      else if (s == 'Late') late++;
-      else if (s == 'Absent') absent++;
+      if (s == 'Present') {
+        present++;
+      } else if (s == 'Late') {
+        late++;
+      } else if (s == 'Absent') {
+        absent++;
+      }
     }
     return {'present': present, 'late': late, 'absent': absent};
   }
@@ -172,8 +176,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
           InkWell(
             borderRadius: BorderRadius.circular(14),
             onTap: () => setState(() {
-              if (isOpen) _expanded.remove(dateStr);
-              else _expanded.add(dateStr);
+              if (isOpen) {
+                _expanded.remove(dateStr);
+              } else {
+                _expanded.add(dateStr);
+              }
             }),
             child: Padding(
               padding: const EdgeInsets.all(14),
