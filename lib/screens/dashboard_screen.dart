@@ -1,14 +1,3 @@
-// ============================================================
-// lib/screens/dashboard_screen.dart
-// FULL REWRITE:
-//   • Complete build() — no more placeholder
-//   • Dark / Light mode toggle in AppBar
-//   • Admin can upload profile picture via Drawer
-//   • SA sees Archive toggle (was admin-only before)
-//   • Auto-sync on resume
-//   • All data loaded from SQLite (LocalDatabase)
-// ============================================================
-
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -28,6 +17,7 @@ import 'report_screen.dart';
 import 'profile_screen.dart';
 import 'sa_list_screen.dart';
 import 'history_screen.dart';
+import 'sa_archive_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -53,16 +43,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool   _showArchived  = false;
   bool   _showSearch    = false;
   bool   _isSyncing     = false;
+  bool   _isLoading     = true;
 
   Uint8List? _profileImageBytes;
   bool _isPickingAdminImage = false;
 
-  final _searchCtrl = TextEditingController();
+  final _searchCtrl  = TextEditingController();
   final _imagePicker = ImagePicker();
 
   bool get _isAdmin => widget.userRole == 'Admin';
-
-  // ── Lifecycle ─────────────────────────────────────────────
 
   @override
   void initState() {
@@ -83,52 +72,74 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (state == AppLifecycleState.resumed) _triggerSync();
   }
 
-  // ── Data ──────────────────────────────────────────────────
-
   Future<void> _loadData() async {
-    // Pull from SQLite (offline-first)
-    final loaded = await LocalDatabase.loadAllSchedules();
-    allInstructors.clear();
-    allInstructors.addAll(loaded);
+    if (!mounted) return;
+    setState(() => _isLoading = true);
 
-    await AuthService.getSAList();
+    try {
+      final loaded = await LocalDatabase.loadAllSchedules()
+          .timeout(const Duration(seconds: 10), onTimeout: () => []);
+      allInstructors.clear();
+      allInstructors.addAll(loaded);
 
-    if (await HistoryService.shouldAutoSave()) {
-      await HistoryService.saveToday(allInstructors);
-      await ResetUtility.resetAll(allInstructors);
+      // On a new device with empty local DB, pull from Supabase
+      if (allInstructors.isEmpty && await SyncService.isOnline()) {
+        final cloud = await SyncService.pullSchedules();
+        if (cloud.isNotEmpty) {
+          allInstructors.clear();
+          allInstructors.addAll(cloud);
+        }
+      }
+
+      await AuthService.getSAList();
+
+      if (await HistoryService.shouldAutoSave()) {
+        await HistoryService.saveToday(allInstructors);
+        await ResetUtility.resetAll(allInstructors);
+      }
+
+      await _loadProfileImage();
+      _triggerSync();
+    } catch (e) {
+      debugPrint('[Dashboard] _loadData error: $e');
     }
 
-    await _loadProfileImage();
-    _triggerSync();
-
     if (!mounted) return;
+    setState(() => _isLoading = false);
     _refresh();
   }
 
   Future<void> _loadProfileImage() async {
-    final b64 = await AuthService.loadProfileImage(widget.username);
-    if (!mounted) return;
-    setState(() {
-      if (b64 != null && b64.isNotEmpty) {
-        try {
-          _profileImageBytes = base64Decode(b64);
-        } catch (_) {
+    try {
+      final b64 = await AuthService.loadProfileImage(widget.username);
+      if (!mounted) return;
+      setState(() {
+        if (b64 != null && b64.isNotEmpty) {
+          try {
+            _profileImageBytes = base64Decode(b64);
+          } catch (_) {
+            _profileImageBytes = null;
+          }
+        } else {
           _profileImageBytes = null;
         }
-      } else {
-        _profileImageBytes = null;
-      }
-    });
+      });
+    } catch (e) {
+      debugPrint('[Dashboard] _loadProfileImage error: $e');
+    }
   }
 
   Future<void> _triggerSync() async {
     if (_isSyncing) return;
+    if (!mounted) return;
     setState(() => _isSyncing = true);
-    await SyncService.syncAll();
+    try {
+      await SyncService.syncAll();
+    } catch (e) {
+      debugPrint('[Dashboard] sync error: $e');
+    }
     if (mounted) setState(() => _isSyncing = false);
   }
-
-  // ── Admin profile image upload ────────────────────────────
 
   Future<void> _pickAdminImage() async {
     if (_isPickingAdminImage) return;
@@ -137,15 +148,15 @@ class _DashboardScreenState extends State<DashboardScreen>
       final XFile? picked =
           await _imagePicker.pickImage(source: ImageSource.gallery);
       if (picked == null) {
-        setState(() => _isPickingAdminImage = false);
+        if (mounted) setState(() => _isPickingAdminImage = false);
         return;
       }
-      final bytes   = await picked.readAsBytes();
-      final b64     = base64Encode(bytes);
+      final bytes = await picked.readAsBytes();
+      final b64   = base64Encode(bytes);
       await AuthService.saveProfileImage(widget.username, b64);
       if (!mounted) return;
       setState(() {
-        _profileImageBytes  = bytes;
+        _profileImageBytes   = bytes;
         _isPickingAdminImage = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -165,8 +176,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
   }
-
-  // ── Filtering ─────────────────────────────────────────────
 
   bool _matchesSearch(ClassSchedule item) {
     if (_searchVal.isEmpty) return true;
@@ -192,8 +201,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     setState(() => displayList = filtered);
   }
 
-  // ── Stats ─────────────────────────────────────────────────
-
   int get _presentCount =>
       displayList.where((s) => s.status == 'Present').length;
   int get _lateCount =>
@@ -203,18 +210,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   int get _uncheckedCount =>
       displayList.where((s) => s.status == null).length;
 
-  // ── Helpers ───────────────────────────────────────────────
-
   String _getInitials(String name) {
     final parts =
         name.trim().split(' ').where((w) => w.isNotEmpty).toList();
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return parts.isNotEmpty ? parts[0][0].toUpperCase() : 'U';
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
   }
 
   void _logout() {
+    allInstructors.clear();
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -222,178 +227,102 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ══════════════════════════════════════════════════════════
-  // BUILD
-  // ══════════════════════════════════════════════════════════
-
   @override
   Widget build(BuildContext context) {
-    final theme  = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Scaffold(
-      appBar: _buildAppBar(isDark),
-      drawer: _buildDrawer(isDark),
-      body: Column(
-        children: [
-          _buildShiftTabs(isDark),
-          if (_showSearch) _buildSearchBar(),
-          if (_isAdmin && !_showArchived) _buildStatBar(isDark),
-          Expanded(child: _buildList()),
-        ],
-      ),
-      floatingActionButton: _isAdmin && !_showArchived ? _buildFab() : null,
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeService.themeMode,
+      builder: (_, mode, __) {
+        final dark = mode == ThemeMode.dark;
+        return Scaffold(
+          appBar: _buildAppBar(dark),
+          drawer: _buildDrawer(dark),
+          body: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: _green))
+              : Column(
+                  children: [
+                    _buildShiftTabs(dark),
+                    if (_showSearch) _buildSearchBar(),
+                    _buildStatBar(dark),
+                    Expanded(child: _buildList()),
+                  ],
+                ),
+          floatingActionButton:
+              _isAdmin && !_showArchived ? _buildFab() : null,
+        );
+      },
     );
   }
 
-  // ── AppBar ────────────────────────────────────────────────
-
-  PreferredSizeWidget _buildAppBar(bool isDark) {
+  AppBar _buildAppBar(bool isDark) {
     return AppBar(
-      elevation: 0,
-      backgroundColor: _green,
-      foregroundColor: Colors.white,
-      title: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'TCGC Monitoring',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                Text(
-                  _showArchived
-                      ? '${widget.userRole} · Archive'
-                      : widget.userRole,
-                  style: const TextStyle(
-                      fontSize: 11, color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
-          if (_isSyncing)
-            const Padding(
-              padding: EdgeInsets.only(right: 8),
+      title: Text(_showArchived
+          ? (_isAdmin ? 'Archive' : 'My Archive')
+          : 'TCGC Monitoring'),
+      actions: [
+        if (_isSyncing)
+          const Padding(
+            padding: EdgeInsets.only(right: 4),
+            child: Center(
               child: SizedBox(
-                width: 13,
-                height: 13,
+                width: 18,
+                height: 18,
                 child: CircularProgressIndicator(
-                    color: Colors.white60, strokeWidth: 2),
+                    color: Colors.white, strokeWidth: 2),
               ),
             ),
-        ],
-      ),
-      actions: [
-        // Search
+          ),
         IconButton(
           icon: Icon(_showSearch ? Icons.search_off : Icons.search),
           onPressed: () {
             setState(() {
               _showSearch = !_showSearch;
               if (!_showSearch) {
-                _searchVal = '';
                 _searchCtrl.clear();
+                _searchVal = '';
                 _refresh();
               }
             });
           },
         ),
-        // Archive toggle — visible to BOTH Admin and SA
         IconButton(
-          icon: Icon(
-            _showArchived ? Icons.inventory_2 : Icons.archive_outlined,
-            color: _showArchived ? Colors.amber : Colors.white,
+          icon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Icon(
+              _showArchived
+                  ? Icons.inventory_2_rounded
+                  : Icons.inventory_2_outlined,
+              key: ValueKey(_showArchived),
+            ),
           ),
-          tooltip: _showArchived ? 'Show Active' : 'Show Archived',
+          tooltip: _showArchived ? 'Back to Active' : 'View Archive',
           onPressed: () {
             setState(() => _showArchived = !_showArchived);
             _refresh();
           },
         ),
-        // Report (admin only)
-        if (_isAdmin)
-          IconButton(
-            icon: const Icon(Icons.bar_chart_rounded),
-            tooltip: 'Report',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) =>
-                      ReportScreen(schedules: allInstructors)),
-            ),
-          ),
-        // Dark mode toggle
-        ValueListenableBuilder<ThemeMode>(
-          valueListenable: ThemeService.themeMode,
-          builder: (_, mode, __) => IconButton(
-            icon: Icon(
-              mode == ThemeMode.dark
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
-            ),
-            tooltip: mode == ThemeMode.dark ? 'Light Mode' : 'Dark Mode',
-            onPressed: () => ThemeService.toggle(),
-          ),
-        ),
-        // Profile avatar
-        Padding(
-          padding: const EdgeInsets.only(right: 10),
-          child: GestureDetector(
-            onTap: _isAdmin
-                ? _pickAdminImage
-                : () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              ProfileScreen(username: widget.username)),
-                    ).then((_) => _loadProfileImage()),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor:
-                      Colors.white.withValues(alpha: 0.25),
-                  backgroundImage: _profileImageBytes != null
-                      ? MemoryImage(_profileImageBytes!)
-                      : null,
-                  child: _profileImageBytes == null
-                      ? Text(
-                          _getInitials(widget.username),
-                          style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white),
-                        )
-                      : null,
-                ),
-                if (_isAdmin)
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.camera_alt,
-                          size: 8, color: _green),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
 
-  // ── Drawer ────────────────────────────────────────────────
+  Widget _buildProfileAvatar({double radius = 30}) {
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.white.withValues(alpha: 0.25),
+      backgroundImage: _profileImageBytes != null
+          ? MemoryImage(_profileImageBytes!)
+          : null,
+      child: _profileImageBytes == null
+          ? Text(
+              _getInitials(widget.username),
+              style: TextStyle(
+                  fontSize: radius * 0.65,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
+            )
+          : null,
+    );
+  }
 
   Widget _buildDrawer(bool isDark) {
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
@@ -403,7 +332,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          // Header
           DrawerHeader(
             decoration: const BoxDecoration(color: _green),
             child: Column(
@@ -414,23 +342,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   onTap: _isAdmin ? _pickAdminImage : null,
                   child: Stack(
                     children: [
-                      CircleAvatar(
-                        radius: 30,
-                        backgroundColor:
-                            Colors.white.withValues(alpha: 0.25),
-                        backgroundImage: _profileImageBytes != null
-                            ? MemoryImage(_profileImageBytes!)
-                            : null,
-                        child: _profileImageBytes == null
-                            ? Text(
-                                _getInitials(widget.username),
-                                style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              )
-                            : null,
-                      ),
+                      _buildProfileAvatar(radius: 30),
                       if (_isAdmin)
                         Positioned(
                           bottom: 0,
@@ -440,8 +352,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                             decoration: BoxDecoration(
                               color: Colors.white,
                               shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: _green, width: 1.5),
+                              border:
+                                  Border.all(color: _green, width: 1.5),
                             ),
                             child: const Icon(Icons.camera_alt,
                                 size: 10, color: _green),
@@ -467,10 +379,10 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
 
-          // Admin — Update Profile Photo
           if (_isAdmin)
             ListTile(
-              leading: const Icon(Icons.photo_camera, color: _green),
+              leading:
+                  const Icon(Icons.photo_camera, color: _green),
               title: const Text('Update Profile Photo'),
               onTap: () {
                 Navigator.pop(context);
@@ -478,10 +390,10 @@ class _DashboardScreenState extends State<DashboardScreen>
               },
             ),
 
-          // SA — My Profile
           if (!_isAdmin)
             ListTile(
-              leading: const Icon(Icons.person_outline, color: _green),
+              leading:
+                  const Icon(Icons.person_outline, color: _green),
               title: const Text('My Profile'),
               onTap: () {
                 Navigator.pop(context);
@@ -494,7 +406,26 @@ class _DashboardScreenState extends State<DashboardScreen>
               },
             ),
 
-          // Admin — SA list & History
+          // SA dedicated archive page
+          if (!_isAdmin)
+            ListTile(
+              leading: const Icon(Icons.inventory_2_outlined,
+                  color: _green),
+              title: const Text('My Archive'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SAArchiveScreen(
+                      username: widget.username,
+                      onRefresh: _loadData,
+                    ),
+                  ),
+                );
+              },
+            ),
+
           if (_isAdmin) ...[
             ListTile(
               leading:
@@ -538,7 +469,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ],
 
-          // Dark mode toggle
           ValueListenableBuilder<ThemeMode>(
             valueListenable: ThemeService.themeMode,
             builder: (_, mode, __) => ListTile(
@@ -548,19 +478,16 @@ class _DashboardScreenState extends State<DashboardScreen>
                     : Icons.dark_mode_outlined,
                 color: _green,
               ),
-              title: Text(
-                mode == ThemeMode.dark ? 'Light Mode' : 'Dark Mode',
-              ),
-              onTap: () {
-                ThemeService.toggle();
-              },
+              title: Text(mode == ThemeMode.dark
+                  ? 'Light Mode'
+                  : 'Dark Mode'),
+              onTap: () => ThemeService.toggle(),
             ),
           ),
 
           const Divider(),
           ListTile(
-            leading:
-                const Icon(Icons.logout, color: Colors.red),
+            leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Logout',
                 style: TextStyle(color: Colors.red)),
             onTap: () {
@@ -572,8 +499,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     );
   }
-
-  // ── Shift tabs ────────────────────────────────────────────
 
   Widget _buildShiftTabs(bool isDark) {
     const labels = ['Face to Face', 'Online Set 1', 'Online Set 2'];
@@ -617,9 +542,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: selected
-                          ? Colors.white
-                          : colors[i],
+                      color:
+                          selected ? Colors.white : colors[i],
                     ),
                   ),
                 ),
@@ -630,8 +554,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     );
   }
-
-  // ── Search bar ────────────────────────────────────────────
 
   Widget _buildSearchBar() {
     return Padding(
@@ -662,8 +584,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ── Stat bar ──────────────────────────────────────────────
-
   Widget _buildStatBar(bool isDark) {
     final bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     return Container(
@@ -690,7 +610,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
+          border:
+              Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Column(
           children: [
@@ -701,15 +622,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                     color: color)),
             Text(label,
                 textAlign: TextAlign.center,
-                style:
-                    TextStyle(fontSize: 9, color: color, height: 1.2)),
+                style: TextStyle(
+                    fontSize: 9, color: color, height: 1.2)),
           ],
         ),
       ),
     );
   }
-
-  // ── Schedule list ─────────────────────────────────────────
 
   Widget _buildList() {
     if (displayList.isEmpty) {
@@ -762,8 +681,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     );
   }
-
-  // ── FAB ───────────────────────────────────────────────────
 
   Widget _buildFab() {
     return FloatingActionButton.extended(

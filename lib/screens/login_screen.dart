@@ -1,8 +1,3 @@
-// ============================================================
-// lib/screens/login_screen.dart
-// FIX: "New SA?" is plain text, only "Register here" is tappable/blue
-// ============================================================
-
 import 'package:flutter/material.dart';
 import 'dashboard_screen.dart';
 import 'register_screen.dart';
@@ -16,11 +11,11 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _userCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
+  final _userCtrl  = TextEditingController();
+  final _passCtrl  = TextEditingController();
   final _passFocus = FocusNode();
   bool _passVisible = false;
-  bool _isLoading = false;
+  bool _isLoading   = false;
 
   static const _green = Color(0xFF1B5E20);
 
@@ -28,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
       RegExp(r'^[a-zA-Z][a-zA-Z0-9 .]*$').hasMatch(u);
 
   void _showSnackBar(String msg, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
@@ -57,8 +53,18 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
 
+    if (!mounted) return;
     setState(() => _isLoading = true);
-    final role = await AuthService.login(username, password);
+
+    String? role;
+    try {
+      role = await AuthService.login(username, password)
+          .timeout(const Duration(seconds: 15), onTimeout: () => null);
+    } catch (e) {
+      debugPrint('[Login] Error: $e');
+      role = null;
+    }
+
     if (!mounted) return;
     setState(() => _isLoading = false);
 
@@ -67,11 +73,14 @@ class _LoginScreenState extends State<LoginScreen> {
         context,
         MaterialPageRoute(
           builder: (c) =>
-              DashboardScreen(userRole: role, username: username),
+              DashboardScreen(userRole: role!, username: username),
         ),
       );
     } else {
-      _showSnackBar('Account not found or incorrect password.', Colors.red);
+      _showSnackBar(
+        'Account not found, incorrect password, or connection issue.',
+        Colors.red,
+      );
     }
   }
 
@@ -214,7 +223,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
 
-                      // FIX: "New SA?" is plain text. Only "Register here" is tappable.
                       const SizedBox(height: 12),
                       Center(
                         child: Row(
@@ -230,7 +238,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               onTap: () => Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                    builder: (c) => const RegisterScreen()),
+                                    builder: (c) =>
+                                        const RegisterScreen()),
                               ),
                               child: const Text(
                                 'Register here',

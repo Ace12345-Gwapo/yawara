@@ -1,22 +1,20 @@
-// ============================================================
-// lib/widgets/assign_sa_sheet.dart
-// Bottom sheet para i-assign (o i-update) ang SA sa usa ka entry
-// Pwede ra gamiton ang Admin — pwede usab mag-update kung sayop
-// ============================================================
-
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../models/schedule.dart';
 import '../services/auth_service.dart';
 import '../services/persistence_service.dart';
 
-/// I-show ang assign SA bottom sheet
-/// Pwede gamiton para sa unang assign o para mag-update/correct
 void showAssignSASheet(
     BuildContext context, int idx, VoidCallback onRefresh) async {
-  final saList = await AuthService.getSAList();
+  List<String> saList;
+  try {
+    saList = await AuthService.getSAList();
+  } catch (e) {
+    debugPrint('[AssignSA] getSAList error: $e');
+    saList = [];
+  }
+
   if (!context.mounted) return;
 
   if (saList.isEmpty) {
@@ -29,18 +27,17 @@ void showAssignSASheet(
     return;
   }
 
-  // I-load ang profile images sa tanan nga SA
-  final prefs = await SharedPreferences.getInstance();
+  // Load profile images from SQLite via AuthService (NOT SharedPreferences)
   final Map<String, Uint8List?> saImages = {};
   for (final sa in saList) {
-    final savedBase64 = prefs.getString('profile_img_$sa');
-    if (savedBase64 != null && savedBase64.isNotEmpty) {
-      try {
-        saImages[sa] = base64Decode(savedBase64);
-      } catch (_) {
+    try {
+      final b64 = await AuthService.loadProfileImage(sa);
+      if (b64 != null && b64.isNotEmpty) {
+        saImages[sa] = base64Decode(b64);
+      } else {
         saImages[sa] = null;
       }
-    } else {
+    } catch (_) {
       saImages[sa] = null;
     }
   }
@@ -65,7 +62,6 @@ void showAssignSASheet(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Drag handle
           Container(
             width: 40,
             height: 4,
@@ -75,7 +71,6 @@ void showAssignSASheet(
           ),
           const SizedBox(height: 14),
 
-          // Header — ipakita kung naa nay assign para klaro nga pwede mag-update
           Row(
             children: [
               const Icon(Icons.people_outline, color: green),
@@ -85,7 +80,6 @@ void showAssignSASheet(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      // Kung naay assign na, ipakita "Update Assignment"
                       currentAssigned != null
                           ? 'Update Assignment'
                           : 'Assign Student Assistant',
@@ -94,20 +88,11 @@ void showAssignSASheet(
                     ),
                     Text(
                       allInstructors[idx].instructor,
-                      style: TextStyle(
-                          fontSize: 12, color: Colors.grey[500]),
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.grey[500]),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    // Ipakita ang currently assigned SA
-                    if (currentAssigned != null)
-                      Text(
-                        'Current: $currentAssigned',
-                        style: const TextStyle(
-                            fontSize: 11,
-                            color: green,
-                            fontWeight: FontWeight.w600),
-                      ),
                   ],
                 ),
               ),
@@ -116,13 +101,11 @@ void showAssignSASheet(
           const SizedBox(height: 10),
           const Divider(),
 
-          // SA List — pilia ang bag-ong SA o i-unassign
           Flexible(
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: saList.length + 1,
               itemBuilder: (c, i) {
-                // Unna nga option: Unassigned
                 if (i == 0) {
                   return ListTile(
                     leading: CircleAvatar(
@@ -133,12 +116,10 @@ void showAssignSASheet(
                     ),
                     title: const Text('Unassigned',
                         style: TextStyle(color: Colors.grey)),
-                    trailing:
-                        allInstructors[idx].assignedSA == null
-                            ? const Icon(Icons.check_circle, color: green)
-                            : null,
+                    trailing: allInstructors[idx].assignedSA == null
+                        ? const Icon(Icons.check_circle, color: green)
+                        : null,
                     onTap: () {
-                      // I-unassign — tangtangon ang SA
                       allInstructors[idx].assignedSA = null;
                       PersistenceService.saveAttendance(allInstructors);
                       onRefresh();
@@ -183,7 +164,8 @@ void showAssignSASheet(
                         : null,
                   ),
                   title: Text(sa,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text('Student Assistant',
                       style: TextStyle(
                           fontSize: 11, color: Colors.grey[400])),
@@ -191,7 +173,6 @@ void showAssignSASheet(
                       ? const Icon(Icons.check_circle, color: green)
                       : const Icon(Icons.chevron_right,
                           color: Colors.grey),
-                  // I-assign o i-update ang SA para sa entry
                   onTap: () {
                     allInstructors[idx].assignedSA = sa;
                     PersistenceService.saveAttendance(allInstructors);
