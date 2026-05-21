@@ -1,21 +1,20 @@
 // ============================================================
 // lib/main.dart
-// UPDATED: Initialize Supabase before runApp
+// UPDATED: Supabase credentials read from AppConfig — no
+//          hardcoded keys anywhere in this file.
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/app_config.dart';
 import 'screens/login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ── Initialize Supabase ───────────────────────────────────
-  // Replace the two strings below with your project's values.
-  // Go to: Supabase Dashboard → Project Settings → API
   await Supabase.initialize(
-    url: 'https://YOUR_PROJECT_ID.supabase.co',   // ← change this
-    anonKey: 'YOUR_ANON_KEY',                      // ← change this
+    url:     AppConfig.supabaseUrl,
+    anonKey: AppConfig.supabaseAnonKey,
   );
 
   runApp(const TCGCApp());
@@ -27,7 +26,7 @@ class TCGCApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'TCGC Monitoring',
+      title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         fontFamily: 'Poppins',

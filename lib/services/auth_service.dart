@@ -1,21 +1,19 @@
 // ============================================================
 // lib/services/auth_service.dart
-// UPDATED: SA accounts now stored in SQLite (users table)
-//          instead of SharedPreferences.
+// UPDATED: Admin credentials read from AppConfig — no
+//          hardcoded strings in this file.
+//          SA accounts stored in SQLite (local_database.dart).
 //
 // Public API is identical to the original — no screen changes needed.
 // ============================================================
 
 import 'dart:convert';
+import '../config/app_config.dart';
 import '../models/schedule.dart';
 import 'local_database.dart';
 import 'persistence_service.dart';
 
 class AuthService {
-  // Hard-coded admin credentials (unchanged)
-  static const String _adminUser = 'admin';
-  static const String _adminPass = '123';
-
   /// Hash password — same algorithm as original
   static String _hashPassword(String password) {
     return base64.encode(utf8.encode('tcgc_salt_$password'));
@@ -23,7 +21,10 @@ class AuthService {
 
   /// Register a new Student Assistant account
   static Future<bool> registerSA(String username, String password) async {
-    if (username.toLowerCase() == _adminUser) return false;
+    // Block attempts to register as admin
+    if (username.toLowerCase() == AppConfig.adminUsername.toLowerCase()) {
+      return false;
+    }
 
     // Check for existing account
     final existing = await LocalDatabase.getUser(username);
@@ -37,10 +38,13 @@ class AuthService {
     return true;
   }
 
-  /// Login — returns role string or null if invalid
+  /// Login — returns role string or null if credentials are invalid
   static Future<String?> login(String username, String password) async {
-    // Admin check (still hard-coded)
-    if (username == _adminUser && password == _adminPass) return 'Admin';
+    // Admin check — credentials come from AppConfig, not hardcoded here
+    if (username == AppConfig.adminUsername &&
+        password == AppConfig.adminPassword) {
+      return 'Admin';
+    }
 
     final user = await LocalDatabase.getUser(username);
     if (user == null) return null;
@@ -51,7 +55,7 @@ class AuthService {
     return null;
   }
 
-  /// Get list of all registered SA usernames
+  /// Get list of all registered SA usernames (sorted)
   static Future<List<String>> getSAList() async {
     final usernames = await LocalDatabase.getAllSAUsernames();
     usernames.sort();
@@ -91,7 +95,7 @@ class AuthService {
     return true;
   }
 
-  // ── Profile helpers (replaces SharedPreferences profile_ keys) ──
+  // ── Profile helpers ──────────────────────────────────────
 
   static Future<void> saveProfileField(
       String username, String field, String value) async {

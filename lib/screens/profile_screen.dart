@@ -1,13 +1,15 @@
 // ============================================================
 // lib/screens/profile_screen.dart
-// FIX: Helper texts replaced with normal readable Text widgets
+// REWRITTEN: All SharedPreferences calls replaced with
+//            AuthService (which delegates to SQLite).
+//            No more `import shared_preferences`.
 // ============================================================
 
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import '../services/auth_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String username;
@@ -28,8 +30,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _addressFocus = FocusNode();
   final _bioFocus     = FocusNode();
 
-  static const _green = Color(0xFF1B5E20);
-  bool _isSaved       = false;
+  static const _green  = Color(0xFF1B5E20);
+  bool _isSaved        = false;
   bool _isPickingImage = false;
   Uint8List? _imageBytes;
   final ImagePicker _picker = ImagePicker();
@@ -44,22 +46,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _bioCtrl.addListener(()     => setState(() => _isSaved = false));
   }
 
+  // ── Load — from SQLite via AuthService ───────────────────
   void _loadProfile() async {
-    final prefs = await SharedPreferences.getInstance();
+    final gmail   = await AuthService.loadProfileField(widget.username, 'gmail');
+    final phone   = await AuthService.loadProfileField(widget.username, 'phone');
+    final address = await AuthService.loadProfileField(widget.username, 'address');
+    final bio     = await AuthService.loadProfileField(widget.username, 'bio');
+    final imgB64  = await AuthService.loadProfileImage(widget.username);
+
     if (!mounted) return;
-    final savedBase64 = prefs.getString('profile_img_${widget.username}');
     setState(() {
-      _gmailCtrl.text =
-          prefs.getString('profile_gmail_${widget.username}') ?? '';
-      _phoneCtrl.text =
-          prefs.getString('profile_phone_${widget.username}') ?? '';
-      _addressCtrl.text =
-          prefs.getString('profile_address_${widget.username}') ?? '';
-      _bioCtrl.text =
-          prefs.getString('profile_bio_${widget.username}') ?? '';
-      if (savedBase64 != null && savedBase64.isNotEmpty) {
+      _gmailCtrl.text   = gmail   ?? '';
+      _phoneCtrl.text   = phone   ?? '';
+      _addressCtrl.text = address ?? '';
+      _bioCtrl.text     = bio     ?? '';
+      if (imgB64 != null && imgB64.isNotEmpty) {
         try {
-          _imageBytes = base64Decode(savedBase64);
+          _imageBytes = base64Decode(imgB64);
         } catch (_) {
           _imageBytes = null;
         }
@@ -67,17 +70,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  // ── Save — to SQLite via AuthService ─────────────────────
   void _saveProfile() async {
     FocusScope.of(context).unfocus();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        'profile_gmail_${widget.username}', _gmailCtrl.text.trim());
-    await prefs.setString(
-        'profile_phone_${widget.username}', _phoneCtrl.text.trim());
-    await prefs.setString(
-        'profile_address_${widget.username}', _addressCtrl.text.trim());
-    await prefs.setString(
-        'profile_bio_${widget.username}', _bioCtrl.text.trim());
+
+    await AuthService.saveProfileField(
+        widget.username, 'gmail', _gmailCtrl.text.trim());
+    await AuthService.saveProfileField(
+        widget.username, 'phone', _phoneCtrl.text.trim());
+    await AuthService.saveProfileField(
+        widget.username, 'address', _addressCtrl.text.trim());
+    await AuthService.saveProfileField(
+        widget.username, 'bio', _bioCtrl.text.trim());
+
     if (!mounted) return;
     setState(() => _isSaved = true);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -88,6 +93,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── Image picker — saves to SQLite via AuthService ───────
   void _pickImage() async {
     if (_isPickingImage) return;
     setState(() => _isPickingImage = true);
@@ -111,11 +117,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
       final base64Str = base64Encode(bytes);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('profile_img_${widget.username}', base64Str);
+
+      // Save to SQLite via AuthService
+      await AuthService.saveProfileImage(widget.username, base64Str);
+
       if (!mounted) return;
       setState(() {
-        _imageBytes = bytes;
+        _imageBytes    = bytes;
         _isPickingImage = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -133,6 +141,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
   }
+
+  // ── Helpers ───────────────────────────────────────────────
 
   String _getInitials() {
     final parts = widget.username
@@ -173,6 +183,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── Build ─────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -189,7 +201,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Profile avatar ───────────────────────────
+            // ── Profile avatar ──────────────────────────
             Center(
               child: Column(
                 children: [
@@ -237,8 +249,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             decoration: BoxDecoration(
                               color: _green,
                               shape: BoxShape.circle,
-                              border:
-                                  Border.all(color: Colors.white, width: 2),
+                              border: Border.all(
+                                  color: Colors.white, width: 2),
                             ),
                             child: const Icon(Icons.camera_alt,
                                 color: Colors.white, size: 15),
@@ -262,8 +274,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     decoration: BoxDecoration(
                       color: _green.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(20),
-                      border:
-                          Border.all(color: _green.withValues(alpha: 0.2)),
+                      border: Border.all(
+                          color: _green.withValues(alpha: 0.2)),
                     ),
                     child: const Text(
                       'Student Assistant',
@@ -274,7 +286,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  // FIX: Normal text
                   Text(
                     'Tap photo to change',
                     style: TextStyle(fontSize: 13, color: Colors.grey[500]),
@@ -294,7 +305,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   color: Color(0xFF111827)),
             ),
 
-            // FIX: No more helperText — just the fields with clean hints
             _fieldLabel('Bio'),
             TextField(
               controller: _bioCtrl,
@@ -383,7 +393,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   label: Text(
                     _isSaved ? 'Profile Updated' : 'Save Profile',
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
