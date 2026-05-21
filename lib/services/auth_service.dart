@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/schedule.dart';
 import 'local_database.dart';
 import 'persistence_service.dart';
+import 'sync_service.dart';
 
 class AuthService {
   static const String _adminUser = 'admin';
@@ -42,7 +43,17 @@ class AuthService {
         return 'Admin';
       }
 
-      final user = await LocalDatabase.getUser(username);
+      var user = await LocalDatabase.getUser(username);
+
+      if (user == null && await SyncService.isOnline()) {
+        try {
+          await SyncService.pullUsersFromCloud();
+          user = await LocalDatabase.getUser(username);
+        } catch (e) {
+          debugPrint('[AuthService] cloud user pull error: $e');
+        }
+      }
+
       if (user == null) return null;
       if (user['password_hash'] == _hashPassword(password)) {
         return 'Student Assistant';
@@ -70,6 +81,14 @@ class AuthService {
       final existing = await LocalDatabase.getUser(username);
       if (existing == null) return false;
       await LocalDatabase.deleteUser(username);
+
+      if (await SyncService.isOnline()) {
+        try {
+          await SyncService.deleteUserFromCloud(username);
+        } catch (e) {
+          debugPrint('[AuthService] cloud delete error: $e');
+        }
+      }
 
       bool changed = false;
       for (final s in allInstructors) {
@@ -136,8 +155,7 @@ class AuthService {
           'sync_status':   SyncStatus.synced.name,
         });
       } else {
-        await LocalDatabase.updateUserField(
-            username, 'profile_img', base64Image);
+        await LocalDatabase.updateUserField(username, 'profile_img', base64Image);
       }
     } catch (e) {
       debugPrint('[AuthService] saveProfileImage error: $e');

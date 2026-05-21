@@ -6,7 +6,6 @@ import 'local_database.dart';
 
 class SyncService {
   static SupabaseClient get _supabase => Supabase.instance.client;
-
   static const _timeout = Duration(seconds: 12);
 
   static Future<bool> isOnline() async {
@@ -16,7 +15,8 @@ class SyncService {
         return result != ConnectivityResult.none;
       }
       if (result is List<ConnectivityResult>) {
-        return result.isNotEmpty && result.first != ConnectivityResult.none;
+        return result.isNotEmpty &&
+            result.any((r) => r != ConnectivityResult.none);
       }
       return false;
     } catch (_) {
@@ -42,6 +42,7 @@ class SyncService {
     catch (e) { errors.add('Users: $e'); }
 
     if (errors.isNotEmpty) {
+      debugPrint('[SyncService] Partial sync errors: ${errors.join('; ')}');
       return 'Partial sync — errors: ${errors.join('; ')}';
     }
     return 'Synced: $schedSynced schedules, $histSynced history, $usersSynced users';
@@ -51,12 +52,8 @@ class SyncService {
     final pending = await LocalDatabase.getPendingSchedules();
     if (pending.isEmpty) return 0;
 
-    final toDelete = pending
-        .where((s) => s.syncStatus == SyncStatus.deleted)
-        .toList();
-    final toUpsert = pending
-        .where((s) => s.syncStatus != SyncStatus.deleted)
-        .toList();
+    final toDelete = pending.where((s) => s.syncStatus == SyncStatus.deleted).toList();
+    final toUpsert = pending.where((s) => s.syncStatus != SyncStatus.deleted).toList();
 
     if (toUpsert.isNotEmpty) {
       final maps = toUpsert
@@ -73,11 +70,7 @@ class SyncService {
 
     for (final s in toDelete) {
       if (s.id == null) continue;
-      await _supabase
-          .from('schedules')
-          .delete()
-          .eq('id', s.id!)
-          .timeout(_timeout);
+      await _supabase.from('schedules').delete().eq('id', s.id!).timeout(_timeout);
       await LocalDatabase.deleteSchedule(s.id!);
     }
 
@@ -94,7 +87,7 @@ class SyncService {
       return m;
     }).toList();
 
-    await _supabase.from('history').upsert(maps).timeout(_timeout);
+    await _supabase.from('history').upsert(maps, onConflict: 'id').timeout(_timeout);
 
     final ids = pending.map((r) => r['id'] as int).toList();
     await LocalDatabase.markHistorySynced(ids);
@@ -107,13 +100,17 @@ class SyncService {
 
     for (final user in pending) {
       final username = user['username'] as String;
-      await _supabase.from('users').upsert({
+      final payload = <String, dynamic>{
         'username': username,
+        'email':    user['email'],
         'gmail':    user['gmail'],
         'phone':    user['phone'],
         'address':  user['address'],
         'bio':      user['bio'],
-      }).timeout(_timeout);
+      };
+      payload.removeWhere((_, v) => v == null);
+
+      await _supabase.from('users').upsert(payload, onConflict: 'username').timeout(_timeout);
       await LocalDatabase.markUserSynced(username);
     }
     return pending.length;
@@ -123,27 +120,66 @@ class SyncService {
     if (!await isOnline()) return [];
 
     try {
-      final rows = await _supabase
-          .from('schedules')
-          .select()
-          .order('id')
-          .timeout(_timeout);
+      final rows = await _supabase.from('schedules').select().order('id').timeout(_timeout);
 
       final schedules = <ClassSchedule>[];
       for (final row in rows) {
-        final map = Map<String, dynamic>.from(row);
-        map['is_archived']    = (map['is_archived']    == true) ? 1 : 0;
-        map['is_archived_sa'] = (map['is_archived_sa'] == true) ? 1 : 0;
-        map['sync_status']    = SyncStatus.synced.name;
+        try {
+          final map = Map<String, dynamic>.from(row);
+          map['is_archived']    = (map['is_archived']    == true) ? 1 : 0;
+          map['is_archived_sa'] = (map['is_archived_sa'] == true) ? 1 : 0;
+          map['sync_status']    = SyncStatus.synced.name;
 
-        final s = ClassSchedule.fromSqliteMap(map);
-        await LocalDatabase.upsertSchedule(s);
-        schedules.add(s);
+          final s = ClassSchedule.fromSqliteMap(map);
+          await LocalDatabase.upsertSchedule(s);
+          schedules.add(s);
+        } catch (e) {
+          debugPrint('[SyncService] row parse error: $e');
+        }
       }
       return schedules;
     } catch (e) {
       debugPrint('[SyncService] pullSchedules error: $e');
       return [];
+    }
+  }
+
+  static Future<void> pullUsersFromCloud() async {
+    if (!await isOnline()) return;
+    try {
+      final rows = await _supabase
+          .from('users')
+          .select('username, email, gmail, phone, address, bio')
+          .neq('username', 'admin')
+          .timeout(_timeout);
+
+      for (final row in rows) {
+        final username = row['username'] as String?;
+        if (username == null || username.isEmpty) continue;
+        final existing = await LocalDatabase.getUser(username);
+        if (existing == null) {
+          await LocalDatabase.upsertUser({
+            'username':      username,
+            'password_hash': '',
+            'email':         row['email'] ?? '',
+            'gmail':         row['gmail'] ?? '',
+            'phone':         row['phone'] ?? '',
+            'address':       row['address'] ?? '',
+            'bio':           row['bio'] ?? '',
+            'sync_status':   SyncStatus.synced.name,
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[SyncService] pullUsersFromCloud error: $e');
+    }
+  }
+
+  static Future<void> deleteUserFromCloud(String username) async {
+    try {
+      await _supabase.from('users').delete().eq('username', username).timeout(_timeout);
+    } catch (e) {
+      debugPrint('[SyncService] deleteUserFromCloud error: $e');
     }
   }
 
