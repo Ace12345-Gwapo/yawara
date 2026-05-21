@@ -1,12 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/schedule.dart';
 import 'local_database.dart';
+import 'supabase_service.dart';
 
 class SyncService {
-  static SupabaseClient get _supabase => Supabase.instance.client;
-  static const _timeout = Duration(seconds: 12);
 
   static Future<bool> isOnline() async {
     try {
@@ -26,26 +24,20 @@ class SyncService {
 
   static Future<String> syncAll() async {
     if (!await isOnline()) return 'Offline — sync skipped';
+    if (!await SupabaseService.isReachable()) return 'Cannot reach server';
 
-    int schedSynced = 0;
-    int histSynced  = 0;
-    int usersSynced = 0;
-    final errors    = <String>[];
+    int schedSynced = 0, histSynced = 0, usersSynced = 0;
+    final errors = <String>[];
 
-    try { schedSynced = await _syncSchedules(); }
-    catch (e) { errors.add('Schedules: $e'); }
-
-    try { histSynced = await _syncHistory(); }
-    catch (e) { errors.add('History: $e'); }
-
-    try { usersSynced = await _syncUsers(); }
-    catch (e) { errors.add('Users: $e'); }
+    try { schedSynced = await _syncSchedules(); } catch (e) { errors.add('Schedules: $e'); }
+    try { histSynced  = await _syncHistory();   } catch (e) { errors.add('History: $e');   }
+    try { usersSynced = await _syncUsers();     } catch (e) { errors.add('Users: $e');     }
 
     if (errors.isNotEmpty) {
-      debugPrint('[SyncService] Partial sync errors: ${errors.join('; ')}');
-      return 'Partial sync — errors: ${errors.join('; ')}';
+      debugPrint('[SyncService] errors: ${errors.join('; ')}');
+      return 'Partial sync — ${errors.join('; ')}';
     }
-    return 'Synced: $schedSynced schedules, $histSynced history, $usersSynced users';
+    return 'Synced $schedSynced schedules, $histSynced history, $usersSynced users';
   }
 
   static Future<int> _syncSchedules() async {
@@ -61,19 +53,19 @@ class SyncService {
           .map((s) => s.toSupabaseMap())
           .toList();
       if (maps.isNotEmpty) {
-        await _supabase.from('schedules').upsert(maps).timeout(_timeout);
-        for (final s in toUpsert) {
-          if (s.id != null) await LocalDatabase.markSynced(s.id!);
+        final ok = await SupabaseService.upsert('schedules', maps, onConflict: 'id');
+        if (ok) {
+          for (final s in toUpsert) {
+            if (s.id != null) await LocalDatabase.markSynced(s.id!);
+          }
         }
       }
     }
-
     for (final s in toDelete) {
       if (s.id == null) continue;
-      await _supabase.from('schedules').delete().eq('id', s.id!).timeout(_timeout);
+      await SupabaseService.delete('schedules', 'id', s.id!);
       await LocalDatabase.deleteSchedule(s.id!);
     }
-
     return pending.length;
   }
 
@@ -87,10 +79,11 @@ class SyncService {
       return m;
     }).toList();
 
-    await _supabase.from('history').upsert(maps, onConflict: 'id').timeout(_timeout);
-
-    final ids = pending.map((r) => r['id'] as int).toList();
-    await LocalDatabase.markHistorySynced(ids);
+    final ok = await SupabaseService.upsert('history', maps, onConflict: 'id');
+    if (ok) {
+      await LocalDatabase.markHistorySynced(
+          pending.map((r) => r['id'] as int).toList());
+    }
     return pending.length;
   }
 
@@ -100,27 +93,29 @@ class SyncService {
 
     for (final user in pending) {
       final username = user['username'] as String;
-      final payload = <String, dynamic>{
+      final payload  = <String, dynamic>{
         'username': username,
         'email':    user['email'],
         'gmail':    user['gmail'],
         'phone':    user['phone'],
         'address':  user['address'],
         'bio':      user['bio'],
-      };
-      payload.removeWhere((_, v) => v == null);
+      }..removeWhere((_, v) => v == null);
 
-      await _supabase.from('users').upsert(payload, onConflict: 'username').timeout(_timeout);
-      await LocalDatabase.markUserSynced(username);
+      final ok = await SupabaseService.upsert(
+          'users', [payload], onConflict: 'username');
+      if (ok) await LocalDatabase.markUserSynced(username);
     }
     return pending.length;
   }
 
   static Future<List<ClassSchedule>> pullSchedules() async {
     if (!await isOnline()) return [];
-
     try {
-      final rows = await _supabase.from('schedules').select().order('id').timeout(_timeout);
+      final rows = await SupabaseService.select(
+        'schedules',
+        queryParams: ['order=id.asc'],
+      );
 
       final schedules = <ClassSchedule>[];
       for (final row in rows) {
@@ -147,11 +142,11 @@ class SyncService {
   static Future<void> pullUsersFromCloud() async {
     if (!await isOnline()) return;
     try {
-      final rows = await _supabase
-          .from('users')
-          .select('username, email, gmail, phone, address, bio')
-          .neq('username', 'admin')
-          .timeout(_timeout);
+      final rows = await SupabaseService.select(
+        'users',
+        columns: 'username,email,gmail,phone,address,bio',
+        queryParams: ['username=neq.admin'],
+      );
 
       for (final row in rows) {
         final username = row['username'] as String?;
@@ -161,11 +156,11 @@ class SyncService {
           await LocalDatabase.upsertUser({
             'username':      username,
             'password_hash': '',
-            'email':         row['email'] ?? '',
-            'gmail':         row['gmail'] ?? '',
-            'phone':         row['phone'] ?? '',
+            'email':         row['email']   ?? '',
+            'gmail':         row['gmail']   ?? '',
+            'phone':         row['phone']   ?? '',
             'address':       row['address'] ?? '',
-            'bio':           row['bio'] ?? '',
+            'bio':           row['bio']     ?? '',
             'sync_status':   SyncStatus.synced.name,
           });
         }
@@ -177,29 +172,9 @@ class SyncService {
 
   static Future<void> deleteUserFromCloud(String username) async {
     try {
-      await _supabase.from('users').delete().eq('username', username).timeout(_timeout);
+      await SupabaseService.delete('users', 'username', username);
     } catch (e) {
       debugPrint('[SyncService] deleteUserFromCloud error: $e');
     }
-  }
-
-  static RealtimeChannel listenToSchedules(
-      void Function(List<ClassSchedule> updated) onUpdate) {
-    return _supabase
-        .channel('schedules_changes')
-        .onPostgresChanges(
-          event:    PostgresChangeEvent.all,
-          schema:   'public',
-          table:    'schedules',
-          callback: (_) async {
-            try {
-              final updated = await pullSchedules();
-              onUpdate(updated);
-            } catch (e) {
-              debugPrint('[SyncService] realtime callback error: $e');
-            }
-          },
-        )
-        .subscribe();
   }
 }
