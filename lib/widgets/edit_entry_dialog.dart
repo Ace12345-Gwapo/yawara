@@ -1,7 +1,9 @@
 // ============================================================
 // lib/widgets/edit_entry_dialog.dart
-// Dialog para sa pag-edit sa existing schedule entry (Admin only)
-// Pre-filled ang tanan nga fields sa current values
+// FIXED: Layout overflow on Class Time and Class Days rows.
+//   • Days: Row replaced with Wrap — circles wrap on small screens
+//   • Time: uses Flexible instead of fixed-width containers
+//   • All time/day sections wrapped in LayoutBuilder for safety
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -12,12 +14,11 @@ void showEditEntryDialog(
     BuildContext context, int idx, VoidCallback onRefresh) {
   final entry = allInstructors[idx];
 
-  // Pre-fill ang tanan nga controllers sa existing values
-  final schedCodeCtrl = TextEditingController(text: entry.building);
-  final courseCodeCtrl = TextEditingController(text: entry.courseCode);
+  final schedCodeCtrl   = TextEditingController(text: entry.building);
+  final courseCodeCtrl  = TextEditingController(text: entry.courseCode);
   final courseTitleCtrl = TextEditingController(text: entry.subjectTitle);
-  final instructorCtrl = TextEditingController(text: entry.instructor);
-  final roomCtrl = TextEditingController(text: entry.room);
+  final instructorCtrl  = TextEditingController(text: entry.instructor);
+  final roomCtrl        = TextEditingController(text: entry.room);
 
   int tempSet = entry.setNumber;
 
@@ -28,28 +29,21 @@ void showEditEntryDialog(
 
   const green = Color(0xFF1B5E20);
 
-  // ── Parse existing time range ─────────────────────────────
-  // Format: "8:00 AM - 9:30 AM"
   TimeOfDay? startTime;
   TimeOfDay? endTime;
-
   try {
     if (entry.timeRange != 'TBA' && entry.timeRange.contains(' - ')) {
       final parts = entry.timeRange.split(' - ');
       startTime = _parseTimeOfDay(parts[0].trim());
-      endTime = _parseTimeOfDay(parts[1].trim());
+      endTime   = _parseTimeOfDay(parts[1].trim());
     }
-  } catch (_) {
-    // Dili i-parse kung invalid ang format
-  }
+  } catch (_) {}
 
-  // ── Parse existing days ───────────────────────────────────
   final List<String> allDays = [
     'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
   ];
-  final List<bool> selectedDays = List.generate(7, (i) {
-    return entry.days.contains(allDays[i]);
-  });
+  final List<bool> selectedDays =
+      List.generate(7, (i) => entry.days.contains(allDays[i]));
 
   Color setColor(int set) {
     if (set == 0) return const Color(0xFF1B5E20);
@@ -59,8 +53,8 @@ void showEditEntryDialog(
 
   String formatTime(TimeOfDay? t) {
     if (t == null) return '--:-- --';
-    final hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
-    final min = t.minute.toString().padLeft(2, '0');
+    final hour   = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final min    = t.minute.toString().padLeft(2, '0');
     final period = t.period == DayPeriod.am ? 'AM' : 'PM';
     return '$hour:$min $period';
   }
@@ -87,8 +81,7 @@ void showEditEntryDialog(
                 color: green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child:
-                  const Icon(Icons.edit_rounded, color: green, size: 18),
+              child: const Icon(Icons.edit_rounded, color: green, size: 18),
             ),
             const SizedBox(width: 10),
             const Text('Edit Entry',
@@ -100,84 +93,93 @@ void showEditEntryDialog(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Input fields ─────────────────────────
-              _buildField(schedCodeCtrl, null, 'Schedule Code', Icons.tag,
-                  TextInputAction.next,
+              // ── Fields ──────────────────────────────
+              _buildField(schedCodeCtrl, null, 'Schedule Code',
+                  Icons.tag, TextInputAction.next,
                   () => FocusScope.of(dialogContext).requestFocus(f1)),
               const SizedBox(height: 10),
-              _buildField(courseCodeCtrl, f1, 'Course Code', Icons.code,
-                  TextInputAction.next,
+              _buildField(courseCodeCtrl, f1, 'Course Code',
+                  Icons.code, TextInputAction.next,
                   () => FocusScope.of(dialogContext).requestFocus(f2)),
               const SizedBox(height: 10),
-              _buildField(courseTitleCtrl, f2, 'Course Title', Icons.book,
-                  TextInputAction.next,
+              _buildField(courseTitleCtrl, f2, 'Course Title',
+                  Icons.book, TextInputAction.next,
                   () => FocusScope.of(dialogContext).requestFocus(f3)),
               const SizedBox(height: 10),
-              _buildField(
-                  instructorCtrl, f3, 'Instructor Name', Icons.person,
-                  TextInputAction.next,
+              _buildField(instructorCtrl, f3, 'Instructor Name',
+                  Icons.person, TextInputAction.next,
                   () => FocusScope.of(dialogContext).requestFocus(f4)),
               const SizedBox(height: 10),
-              _buildField(roomCtrl, f4, 'Room / MOL', Icons.room,
-                  TextInputAction.done, null),
+              _buildField(roomCtrl, f4, 'Room / MOL',
+                  Icons.room, TextInputAction.done, null),
               const SizedBox(height: 14),
 
-              // ── Time picker ──────────────────────────
+              // ── Time picker — FIX: Flexible, no fixed widths ──
               Text('Class Time',
                   style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.grey[700])),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                          context: dialogContext,
-                          initialTime: startTime ??
-                              const TimeOfDay(hour: 8, minute: 0),
-                          helpText: 'Select Start Time',
-                        );
-                        if (picked != null) setSt(() => startTime = picked);
-                      },
-                      child: _timeBox('Start', formatTime(startTime),
-                          startTime != null),
+              // LayoutBuilder prevents overflow regardless of dialog width
+              LayoutBuilder(
+                builder: (_, constraints) => Row(
+                  children: [
+                    Flexible(
+                      child: GestureDetector(
+                        onTap: () async {
+                          final picked = await showTimePicker(
+                            context: dialogContext,
+                            initialTime: startTime ??
+                                const TimeOfDay(hour: 8, minute: 0),
+                            helpText: 'Select Start Time',
+                          );
+                          if (picked != null) {
+                            setSt(() => startTime = picked);
+                          }
+                        },
+                        child: _timeBox(
+                            'Start', formatTime(startTime),
+                            startTime != null),
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text('–',
-                        style: TextStyle(
-                            fontSize: 18, color: Colors.grey[400])),
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                          context: dialogContext,
-                          initialTime: endTime ??
-                              const TimeOfDay(hour: 9, minute: 30),
-                          helpText: 'Select End Time',
-                        );
-                        if (picked != null) setSt(() => endTime = picked);
-                      },
-                      child: _timeBox(
-                          'End', formatTime(endTime), endTime != null),
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text('–',
+                          style: TextStyle(
+                              fontSize: 18, color: Colors.grey[400])),
                     ),
-                  ),
-                ],
+                    Flexible(
+                      child: GestureDetector(
+                        onTap: () async {
+                          final picked = await showTimePicker(
+                            context: dialogContext,
+                            initialTime: endTime ??
+                                const TimeOfDay(hour: 9, minute: 30),
+                            helpText: 'Select End Time',
+                          );
+                          if (picked != null) {
+                            setSt(() => endTime = picked);
+                          }
+                        },
+                        child: _timeBox(
+                            'End', formatTime(endTime), endTime != null),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 14),
 
-              // ── Day picker ───────────────────────────
+              // ── Day picker — FIX: Wrap prevents overflow ──────
               Text('Class Days',
                   style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.grey[700])),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                spacing: 6,   // horizontal gap
+                runSpacing: 6, // vertical gap when wrapping
                 children: List.generate(7, (i) {
                   final isSelected = selectedDays[i];
                   return GestureDetector(
@@ -185,20 +187,23 @@ void showEditEntryDialog(
                         setSt(() => selectedDays[i] = !selectedDays[i]),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
-                      width: 34,
-                      height: 34,
+                      width: 38,
+                      height: 38,
                       decoration: BoxDecoration(
-                        color: isSelected ? green : Colors.grey[100],
+                        color: isSelected
+                            ? green
+                            : Colors.grey[100],
                         shape: BoxShape.circle,
                         border: Border.all(
-                            color:
-                                isSelected ? green : Colors.grey[300]!),
+                            color: isSelected
+                                ? green
+                                : Colors.grey[300]!),
                       ),
                       child: Center(
                         child: Text(
                           allDays[i].substring(0, 2),
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: isSelected
                                 ? Colors.white
@@ -220,17 +225,17 @@ void showEditEntryDialog(
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _buildClassTypeBtn(
-                      tempSet, 0, Icons.school, 'Face to Face', 'Set 0',
-                      setColor, () => setSt(() => tempSet = 0)),
+                  _buildClassTypeBtn(tempSet, 0, Icons.school,
+                      'Face to Face', 'Set 0', setColor,
+                      () => setSt(() => tempSet = 0)),
                   const SizedBox(width: 8),
-                  _buildClassTypeBtn(
-                      tempSet, 1, Icons.computer, 'Online', 'Set 1',
-                      setColor, () => setSt(() => tempSet = 1)),
+                  _buildClassTypeBtn(tempSet, 1, Icons.computer,
+                      'Online', 'Set 1', setColor,
+                      () => setSt(() => tempSet = 1)),
                   const SizedBox(width: 8),
-                  _buildClassTypeBtn(
-                      tempSet, 2, Icons.videocam, 'Online', 'Set 2',
-                      setColor, () => setSt(() => tempSet = 2)),
+                  _buildClassTypeBtn(tempSet, 2, Icons.videocam,
+                      'Online', 'Set 2', setColor,
+                      () => setSt(() => tempSet = 2)),
                 ],
               ),
             ],
@@ -260,21 +265,21 @@ void showEditEntryDialog(
                 return;
               }
 
-              final timeStr = (startTime != null && endTime != null)
-                  ? '${formatTime(startTime)} - ${formatTime(endTime)}'
-                  : 'TBA';
+              final timeStr =
+                  (startTime != null && endTime != null)
+                      ? '${formatTime(startTime)} - ${formatTime(endTime)}'
+                      : 'TBA';
               final dayStr = buildDayString(selectedDays);
 
-              // I-update ang entry — i-preserve ang status/attendance/SA data
               allInstructors[idx]
-                ..instructor = instructorCtrl.text.trim().toUpperCase()
-                ..courseCode = courseCodeCtrl.text.trim().toUpperCase()
+                ..instructor   = instructorCtrl.text.trim().toUpperCase()
+                ..courseCode   = courseCodeCtrl.text.trim().toUpperCase()
                 ..subjectTitle = courseTitleCtrl.text.trim()
-                ..room = roomCtrl.text.trim().toUpperCase()
-                ..building = schedCodeCtrl.text.trim().toUpperCase()
-                ..timeRange = timeStr
-                ..days = dayStr.isEmpty ? 'TBA' : dayStr
-                ..setNumber = tempSet;
+                ..room         = roomCtrl.text.trim().toUpperCase()
+                ..building     = schedCodeCtrl.text.trim().toUpperCase()
+                ..timeRange    = timeStr
+                ..days         = dayStr.isEmpty ? 'TBA' : dayStr
+                ..setNumber    = tempSet;
 
               PersistenceService.saveAttendance(allInstructors);
               onRefresh();
@@ -294,12 +299,13 @@ void showEditEntryDialog(
   );
 }
 
-// ── Parse "8:00 AM" ngadto sa TimeOfDay ──────────────────────
+// ── Helpers ───────────────────────────────────────────────────
+
 TimeOfDay? _parseTimeOfDay(String timeStr) {
   try {
-    final parts = timeStr.trim().split(' ');
+    final parts     = timeStr.trim().split(' ');
     final timeParts = parts[0].split(':');
-    int hour = int.parse(timeParts[0]);
+    int hour        = int.parse(timeParts[0]);
     final int minute = int.parse(timeParts[1]);
     final String period = parts[1].toUpperCase();
     if (period == 'PM' && hour != 12) hour += 12;
@@ -311,12 +317,13 @@ TimeOfDay? _parseTimeOfDay(String timeStr) {
 }
 
 Widget _buildField(
-    TextEditingController ctrl,
-    FocusNode? focus,
-    String label,
-    IconData icon,
-    TextInputAction action,
-    VoidCallback? onSubmit) {
+  TextEditingController ctrl,
+  FocusNode? focus,
+  String label,
+  IconData icon,
+  TextInputAction action,
+  VoidCallback? onSubmit,
+) {
   return TextField(
     controller: ctrl,
     focusNode: focus,
@@ -333,33 +340,40 @@ Widget _buildField(
   );
 }
 
+// Time box — no fixed pixel width, fills Flexible parent
 Widget _timeBox(String label, String value, bool hasValue) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+    width: double.infinity, // fills Flexible
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
     decoration: BoxDecoration(
       border: Border.all(color: Colors.grey[400]!),
       borderRadius: BorderRadius.circular(8),
     ),
     child: Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.access_time, size: 16, color: Colors.grey[500]),
-        const SizedBox(width: 8),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label,
-                style: TextStyle(fontSize: 10, color: Colors.grey[400])),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: hasValue
-                    ? const Color(0xFF111827)
-                    : Colors.grey[400],
+        const SizedBox(width: 6),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style:
+                      TextStyle(fontSize: 10, color: Colors.grey[400])),
+              Text(
+                value,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: hasValue
+                      ? const Color(0xFF111827)
+                      : Colors.grey[400],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     ),
@@ -367,15 +381,16 @@ Widget _timeBox(String label, String value, bool hasValue) {
 }
 
 Widget _buildClassTypeBtn(
-    int current,
-    int value,
-    IconData icon,
-    String label,
-    String sub,
-    Color Function(int) colorFn,
-    VoidCallback onTap) {
+  int current,
+  int value,
+  IconData icon,
+  String label,
+  String sub,
+  Color Function(int) colorFn,
+  VoidCallback onTap,
+) {
   final isSelected = current == value;
-  final color = colorFn(value);
+  final color      = colorFn(value);
   return Expanded(
     child: GestureDetector(
       onTap: onTap,
@@ -384,28 +399,29 @@ Widget _buildClassTypeBtn(
         decoration: BoxDecoration(
           color: isSelected ? color : Colors.grey[100],
           borderRadius: BorderRadius.circular(8),
-          border:
-              Border.all(color: isSelected ? color : Colors.grey[300]!),
+          border: Border.all(
+              color: isSelected ? color : Colors.grey[300]!),
         ),
         child: Column(
           children: [
             Icon(icon,
-                color: isSelected ? Colors.white : Colors.grey, size: 20),
+                color: isSelected ? Colors.white : Colors.grey,
+                size: 20),
             const SizedBox(height: 3),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.white : Colors.grey[600]),
-            ),
-            Text(
-              sub,
-              style: TextStyle(
-                  fontSize: 10,
-                  color: isSelected ? Colors.white70 : Colors.grey[400]),
-            ),
+            Text(label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected
+                        ? Colors.white
+                        : Colors.grey[600])),
+            Text(sub,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: isSelected
+                        ? Colors.white70
+                        : Colors.grey[400])),
           ],
         ),
       ),

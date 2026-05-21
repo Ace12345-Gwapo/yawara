@@ -1,20 +1,24 @@
 // ============================================================
 // lib/main.dart
-// UPDATED: Supabase credentials read from AppConfig — no
-//          hardcoded keys anywhere in this file.
+// UPDATED: Global theme system (Light / Dark) with smooth
+//          animated transitions. ThemeService persists choice.
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'config/app_config.dart';
+import 'services/theme_service.dart';
 import 'screens/login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Load persisted theme before building the widget tree
+  await ThemeService.load();
+
+  // ── Supabase (fill in your own values) ───────────────────
   await Supabase.initialize(
-    url:     AppConfig.supabaseUrl,
-    anonKey: AppConfig.supabaseAnonKey,
+    url:     'https://YOUR_PROJECT_ID.supabase.co',
+    anonKey: 'YOUR_ANON_KEY',
   );
 
   runApp(const TCGCApp());
@@ -25,15 +29,24 @@ class TCGCApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: AppConfig.appName,
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        fontFamily: 'Poppins',
-        colorSchemeSeed: const Color(0xFF1B5E20),
-        useMaterial3: true,
+    // ValueListenableBuilder rebuilds only when themeMode changes,
+    // keeping the rest of the widget tree stable.
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeService.themeMode,
+      builder: (_, mode, __) => AnimatedTheme(
+        data: mode == ThemeMode.dark
+            ? ThemeService.dark
+            : ThemeService.light,
+        duration: const Duration(milliseconds: 300),
+        child: MaterialApp(
+          title: 'TCGC Monitoring',
+          debugShowCheckedModeBanner: false,
+          theme:      ThemeService.light,
+          darkTheme:  ThemeService.dark,
+          themeMode:  mode,
+          home: const LoginScreen(),
+        ),
       ),
-      home: const LoginScreen(),
     );
   }
 }
